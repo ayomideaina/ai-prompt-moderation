@@ -2,59 +2,65 @@ import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import cors from "cors";
-
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
 const app = express();
-
 app.use(cors());
+app.use(bodyParser.json());
 
 const port = 3000;
-
-// Middleware
-app.use(bodyParser.json());
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 
-// Moderation logic
-const bannedWords = ["kill", "bomb", "hack"];
+// Moderation Setup
+const bannedWords = ["kill", "hack", "bomb"];
 
+// Function to check if text contains banned words
 function violatesModeration(text) {
-  return bannedWords.some(word => text.toLowerCase().includes(word));
+  const regex = new RegExp(`\\b(${bannedWords.join("|")})\\b`, "i");
+  return regex.test(text);
+}
+
+// Function to redact banned words safely
+function moderateText(text) {
+  const regex = new RegExp(`\\b(${bannedWords.join("|")})\\b`, "gi");
+  return text.replace(regex, "[REDACTED]");
 }
 
 // Routes
 app.post("/generate", async (req, res) => {
   const userPrompt = req.body.prompt;
 
-  // 1️⃣ Input moderation
+  // Input Moderation
   if (violatesModeration(userPrompt)) {
-    return res.status(400).json({ message: "❌ Your input violated the moderation policy." });
+    return res
+      .status(400)
+      .json({ message: "Your input violated the moderation policy." });
   }
 
-  const systemPrompt = `You are a helpful and safe AI assistant. Always respond politely and avoid unsafe or illegal topics.`;
+  const systemPrompt = `
+You are a helpful and safe AI assistant.
+Always respond politely and avoid unsafe or illegal topics.
+`;
 
   try {
-    // 2️⃣ Combine system + user prompts
+    // Combine system + user prompts
     const prompt = `${systemPrompt}\n\nUser: ${userPrompt}`;
 
-    // 3️⃣ Send to Gemini
+    // Send to Gemini
     const result = await model.generateContent(prompt);
     let aiResponse = result.response.text();
 
-    // 4️⃣ Output moderation
+    // Output Moderation
     if (violatesModeration(aiResponse)) {
-      aiResponse = aiResponse.replace(
-        new RegExp(bannedWords.join("|"), "gi"),
-        "[REDACTED]"
-      );
+      aiResponse = moderateText(aiResponse);
     }
 
-    // 5️⃣ Respond
+    // Return Response
     res.json({ response: aiResponse });
   } catch (error) {
     console.error("Error generating response:", error);
@@ -62,4 +68,6 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-app.listen(port, () => console.log(`🚀 Server running on http://localhost:${port}`));
+app.listen(port, () =>
+  console.log(`Server running on http://localhost:${port}`)
+);
